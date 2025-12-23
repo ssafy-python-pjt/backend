@@ -143,18 +143,21 @@ def join_deposit_product(request, fin_prdt_cd):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def recommend_product(request):
+    print(request)
     # 1. 사용자 정보 수신
     user_info = request.data
     
-    # 2. 추천 후보군 선정 (DB에서 상위 10개 추출)
-    products = DepositProduct.objects.all()[:10] 
+    # 2. 추천 후보군 선정
+    products = DepositProduct.objects.all()
     product_list_text = ""
     for p in products:
         max_rate = 0
+        trm = 0
         for opt in p.options.all():
             if opt.intr_rate2 and opt.intr_rate2 > max_rate:
                 max_rate = opt.intr_rate2
-        product_list_text += f"- 상품명: {p.fin_prdt_nm} (은행: {p.kor_co_nm}), 최고금리: {max_rate}%\n"
+            trm = opt.save_trm
+        product_list_text += f"- 상품명: {p.fin_prdt_nm} (은행: {p.kor_co_nm}), 가입기간: {trm} 최고금리: {max_rate}%\n"
 
     # 3. 프롬프트(질문) 구성
     # Gemini에게 JSON 형식을 강제하기 위해 명확한 지시가 필요합니다.
@@ -173,7 +176,7 @@ def recommend_product(request):
     
     [요청 사항]
     1. 사용자의 목적과 자산 상황을 고려하여 가장 적합한 상품 1개를 선택하세요.
-    2. 선택한 이유를 친절하게 설명해주세요.
+    2. 선택한 이유를 친절하게 설명해주세요. 예: "목표 금액에 근접한 상품을 추천한 이유", "안정형 투자를 원하는 고객님을 위해 안정적인 금리를 제공하는 상품을 선택"
     3. 반드시 아래 JSON 형식으로만 답변해주세요. 마크다운(```json)이나 추가 설명 없이 순수 JSON만 출력하세요.
     
     {{
@@ -185,7 +188,9 @@ def recommend_product(request):
         "products": [
             {{
                 "fin_prdt_nm": "추천한 상품명",
-                "kor_co_nm": "해당 은행명"
+                "kor_co_nm": "해당 은행명",
+                "max_rate": "최고 금리",
+                "save_trm": "가입 기간"
             }}
         ]
     }}
@@ -228,7 +233,7 @@ def recommend_product(request):
             ai_text = ai_text.replace('```json', '').replace('```', '').strip()
         elif ai_text.startswith('```'):
             ai_text = ai_text.replace('```', '').strip()
-            
+
         result = json.loads(ai_text)
         return Response(result)
 

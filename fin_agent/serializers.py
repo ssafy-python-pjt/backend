@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import DepositProduct, DepositOptions
 from django.contrib.auth import get_user_model # 현재 활성화된 유저 모델을 가져옴
-from .models import JeonseLoanProduct, JeonseLoanOption, Article # import에 모델 추가!
+from .models import JeonseLoanProduct, JeonseLoanOption, Article, UserJoinedProduct # import에 모델 추가!
 
 # 1. 예금 옵션 시리얼라이저 (기존 유지)
 class DepositOptionsSerializer(serializers.ModelSerializer):
@@ -21,16 +21,29 @@ class DepositProductSerializer(serializers.ModelSerializer):
 
 User = get_user_model()
 
+
+class UserJoinedProductSerializer(serializers.ModelSerializer):
+    # 연결된 상품의 기본 정보도 함께 포함
+    product_name = serializers.CharField(source='product.fin_prdt_nm', read_only=True)
+    bank_name = serializers.CharField(source='product.kor_co_nm', read_only=True)
+    save_trm = serializers.IntegerField(source='product.options.first.save_trm', read_only=True)
+    product = DepositProductSerializer(read_only=True)
+    
+    class Meta:
+        model = UserJoinedProduct
+        fields = ('id', 'product', 'product_name', 'bank_name', 'amount', 'monthly_payment', 'joined_at', 'save_trm')
+
+
 class UserSerializer(serializers.ModelSerializer):
     # ★ 핵심: 역참조 데이터를 가져올 때, 기존에 만든 ProductSerializer를 재사용합니다.
     # many=True: 가입한 상품이 여러 개일 수 있음
     # read_only=True: 프로필 조회 시 상품 정보를 수정하진 않음
-    financial_products = DepositProductSerializer(many=True, read_only=True)
+    joined_details = UserJoinedProductSerializer(many=True, read_only=True)
 
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'financial_products', 'age', 'money', 'salary')
-
+        fields = ('id', 'username', 'email', 'joined_details', 'age', 'money', 'salary')
+        
 # [추가] 전세자금대출 옵션 시리얼라이저
 class JeonseLoanOptionSerializer(serializers.ModelSerializer):
     class Meta:

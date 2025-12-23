@@ -1,17 +1,13 @@
 from django.conf import settings
-from rest_framework.decorators import api_view
+from django.shortcuts import get_object_or_404
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework import status
-import requests
-from .models import DepositProduct, DepositOptions
-from .serializers import DepositProductSerializer, DepositOptionsSerializer
-from django.shortcuts import get_object_or_404
-from rest_framework.decorators import permission_classes
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
-from .serializers import DepositProductSerializer, DepositOptionsSerializer, UserSerializer, JeonseLoanProductSerializer, JeonseLoanOptionSerializer, ArticleSerializer, ArticleListSerializer
+from .models import DepositProduct, DepositOptions, UserJoinedProduct, JeonseLoanProduct, JeonseLoanOption, Article
+from .serializers import DepositProductSerializer, DepositOptionsSerializer, UserJoinedProductSerializer, JeonseLoanProductSerializer, JeonseLoanOptionSerializer, UserSerializer, ArticleSerializer, ArticleListSerializer
 import json
-from .models import JeonseLoanProduct, JeonseLoanOption, Article
-from .serializers import JeonseLoanProductSerializer, JeonseLoanOptionSerializer
+import requests
 
 # 환경변수에서 API 키 가져오기
 API_KEY = settings.FINLIFE_API_KEY
@@ -89,6 +85,81 @@ def save_deposit_products(request):
 
     except Exception as e:
         return Response({"error": f"저장 실패: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+@api_view(['GET'])
+def save_saving_products(request):
+    # 적금 API 주소로 변경
+    SAVING_URL = 'http://finlife.fss.or.kr/finlifeapi/savingProductsSearch.json'
+    params = {
+        'auth': API_KEY,
+        'topFinGrpNo': '020000',
+        'pageNo': 1
+    }
+    
+    try:
+        # 2. 금융감독원 API 호출
+        response = requests.get(SAVING_URL, params=params).json()
+        
+        # 3. 데이터 파싱
+        base_list = response.get('result').get('baseList')   # 상품 목록
+        option_list = response.get('result').get('optionList') # 금리 옵션 목록
+
+        # [단계 A] 상품 기본 정보(Base) 먼저 저장
+        for product in base_list:
+            # 이미 있는 상품 코드는 건너뜀 (중복 방지)
+            if DepositProduct.objects.filter(fin_prdt_cd=product.get('fin_prdt_cd')).exists():
+                continue
+
+            save_data = {
+                'fin_prdt_cd': product.get('fin_prdt_cd'),
+                'kor_co_nm': product.get('kor_co_nm'),
+                'fin_prdt_nm': product.get('fin_prdt_nm'),
+                'etc_note': product.get('etc_note'),
+                'join_deny': int(product.get('join_deny')),
+                'join_member': product.get('join_member'),
+                'join_way': product.get('join_way'),
+                'spcl_cnd': product.get('spcl_cnd'),
+            }
+            serializer = DepositProductSerializer(data=save_data)
+            if serializer.is_valid(raise_exception=True):
+                serializer.save()
+
+        # [단계 B] 옵션 정보(Options) 저장 (부모 상품과 연결)
+        for option in option_list:
+            # 1. 이 옵션의 부모 상품이 DB에 있는지 찾기
+            try:
+                product_instance = DepositProduct.objects.get(fin_prdt_cd=option.get('fin_prdt_cd'))
+            except DepositProduct.DoesNotExist:
+                # 부모 상품이 아직 저장이 안 됐다면 옵션도 저장 불가 -> 건너뜀
+                continue
+
+            # 2. 이미 저장된 옵션인지 확인 (중복 방지)
+            if DepositOptions.objects.filter(
+                product=product_instance,
+                save_trm=option.get('save_trm'),
+                intr_rate_type_nm=option.get('intr_rate_type_nm')
+            ).exists():
+                continue
+
+            # 3. 데이터 매핑
+            save_data = {
+                'fin_prdt_cd': option.get('fin_prdt_cd'),
+                'intr_rate_type_nm': option.get('intr_rate_type_nm'),
+                'intr_rate': option.get('intr_rate') or 0, # 금리가 없으면 0 처리
+                'intr_rate2': option.get('intr_rate2') or 0,
+                'save_trm': int(option.get('save_trm')),
+            }
+            
+            serializer = DepositOptionsSerializer(data=save_data)
+            if serializer.is_valid(raise_exception=True):
+                # ★ 핵심: 저장할 때 부모 객체(product)를 같이 넣어줌
+                serializer.save(product=product_instance)
+
+        return Response({"message": "금융 상품 및 옵션 데이터 저장 완료!"}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": f"저장 실패: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 # [조회용 API]
 @api_view(['GET'])
@@ -113,29 +184,24 @@ def profile(request):
 
 # [추가] 상품 가입 기능 (POST)
 @api_view(['POST'])
-@permission_classes([IsAuthenticated]) # 로그인한 사람만 접근 가능!
+@permission_classes([IsAuthenticated])
 def join_deposit_product(request, fin_prdt_cd):
-    # 1. 가입하려는 상품 찾기 (없으면 404 에러 자동 발생)
     product = get_object_or_404(DepositProduct, fin_prdt_cd=fin_prdt_cd)
-    
-    # 2. 현재 로그인한 유저 가져오기
     user = request.user 
     
-    # 3. 이미 가입했는지 확인 (Optional)
-    if user.financial_products.filter(fin_prdt_cd=fin_prdt_cd).exists():
-        return Response({
-            "message": "이미 가입한 상품입니다.",
-            "type": "warning"
-        }, status=status.HTTP_200_OK)
+    # 이미 가입했는지 확인
+    if UserJoinedProduct.objects.filter(user=user, product=product).exists():
+        return Response({"message": "이미 가입한 상품입니다."}, status=status.HTTP_400_BAD_REQUEST)
     
-    # 4. 가입 처리 (M:N 관계 연결)
-    # user.financial_products.add(product) -> DB의 중개 테이블에 데이터 생성
-    user.financial_products.add(product)
+    # 중개 테이블 레코드 생성 (기본값으로 저장)
+    UserJoinedProduct.objects.create(
+        user=user, 
+        product=product,
+        amount=0,
+        monthly_payment=0
+    )
     
-    return Response({
-        "message": f"'{product.fin_prdt_nm}' 상품에 성공적으로 가입되었습니다!",
-        "current_join_count": user.financial_products.count()
-    }, status=status.HTTP_201_CREATED)
+    return Response({"message": f"'{product.fin_prdt_nm}' 가입 완료!"}, status=status.HTTP_201_CREATED)
 
 # [추가] AI 금융 상품 추천 API
 
@@ -298,3 +364,31 @@ def jeonse_loan_products(request):
     products = JeonseLoanProduct.objects.all()
     serializer = JeonseLoanProductSerializer(products, many=True)
     return Response(serializer.data)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def update_profile(request):
+    user = request.user
+    # partial=True로 설정하여 일부 필드만 들어와도 수정 가능하게 합니다.
+    serializer = UserSerializer(user, data=request.data, partial=True)
+    if serializer.is_valid(raise_exception=True):
+        serializer.save()
+        return Response(serializer.data)
+
+@api_view(['DELETE', 'PUT'])
+@permission_classes([IsAuthenticated])
+def manage_joined_product(request, product_pk):
+    # 특정 유저가 가입한 상세 정보 레코드 찾기
+    joined_product = get_object_or_404(UserJoinedProduct, pk=joined_pk, user=request.user)
+    
+    if request.method == 'PUT':
+        # 예금액, 월 납입액, 가입일 등 업데이트
+        serializer = UserJoinedProductSerializer(joined_product, data=request.data, partial=True)
+        if serializer.is_valid(raise_exception=True):
+            serializer.save()
+            return Response(serializer.data)
+            
+    elif request.method == 'DELETE':
+        # 상품 해지
+        joined_product.delete()
+        return Response({"message": "해지되었습니다."}, status=status.HTTP_204_NO_CONTENT)

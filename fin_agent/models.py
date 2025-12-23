@@ -1,5 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.conf import settings
+
+
 
 # 1. 금융 상품 기본 정보 (Base)
 class DepositProduct(models.Model):
@@ -30,11 +33,12 @@ class DepositOptions(models.Model):
 
 # 3. 커스텀 유저 모델
 class User(AbstractUser):
-    # 사용자가 가입한 상품 목록
+    #사용자가 가입한 상품 목록
     financial_products = models.ManyToManyField(
         DepositProduct, 
         related_name='joined_users',
-        blank=True
+        blank=True,
+        through='UserJoinedProduct'  # 중개 모델 지정
     )
     age = models.IntegerField(null=True, blank=True)
     money = models.BigIntegerField(null=True, blank=True)
@@ -72,3 +76,15 @@ class Article(models.Model):
 
     def __str__(self):
         return self.title
+    
+class UserJoinedProduct(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='joined_details')
+    product = models.ForeignKey(DepositProduct, on_delete=models.CASCADE)
+    
+    # 추가 요구사항 필드
+    amount = models.BigIntegerField(default=0, help_text="예금액 또는 총 납입액")
+    monthly_payment = models.BigIntegerField(default=0, help_text="월 납입액")
+    joined_at = models.DateField(auto_now_add=True, help_text="가입일") # 기본값은 오늘
+
+    class Meta:
+        unique_together = ('user', 'product') # 한 유저가 같은 상품을 중복 가입하는 것 방지

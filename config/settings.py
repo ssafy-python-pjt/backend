@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 import environ # 추가
+import socket
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,8 +24,8 @@ env = environ.Env(
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
 # SECRET_KEY와 DEBUG를 .env에서 가져옴
-SECRET_KEY = env('SECRET_KEY')
-DEBUG = env('DEBUG')
+SECRET_KEY = env('SECRET_KEY', default='django-insecure-default-key')
+DEBUG = env.bool('DEBUG', default=True) # env('DEBUG') 대신 env.bool() 사용 권장
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -35,7 +36,8 @@ SECRET_KEY = 'django-insecure-w%9k-q1uhbq5a4(4%c6f@87-zvszi!0act3s4p-v5$*6ng1mfv
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+# 2. ALLOWED_HOSTS 확장 및 소켓 바인딩 안정화
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
 
 
 # Application definition
@@ -119,6 +121,14 @@ DATABASES = {
 }
 
 
+# Allauth 감쇠 경고 및 설정 최신화 (Deprecation Warning 해결)
+ACCOUNT_SIGNUP_FIELDS = {
+    'username': {'required': True},
+    'email': {'required': True},
+}
+# 기존의 USERNAME_REQUIRED 등 개별 설정 대신 위 형식을 사용합니다.
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -137,6 +147,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+os.environ['NO_PROXY'] = 'localhost,127.0.0.1,finlife.fss.or.kr'
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
@@ -159,6 +172,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'fin_agent.User'
-FINLIFE_API_KEY = env('FINLIFE_API_KEY', default='')
-SSAFY_GMS_URL = env('SSAFY_GMS_URL')
-SSAFY_GMS_API_KEY = env('SSAFY_GMS_API_KEY')
+FINLIFE_API_KEY = env('FINLIFE_API_KEY', default='default_key')
+SSAFY_GMS_URL = env('SSAFY_GMS_URL', default='http://127.0.0.1:8000') 
+SSAFY_GMS_API_KEY = env('SSAFY_GMS_API_KEY', default='default_key')

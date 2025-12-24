@@ -1,80 +1,72 @@
 from rest_framework import serializers
-from .models import DepositProduct, DepositOptions
-from django.contrib.auth import get_user_model # 현재 활성화된 유저 모델을 가져옴
-from .models import JeonseLoanProduct, JeonseLoanOption, Article, UserJoinedProduct # import에 모델 추가!
+from .models import DepositProduct, DepositOptions, UserJoinedProduct, JeonseLoanProduct, JeonseLoanOption, Article
+from django.contrib.auth import get_user_model
 
-# 1. 예금 옵션 시리얼라이저 (기존 유지)
+User = get_user_model()
+
+# 1. 예금/적금 옵션 시리얼라이저
 class DepositOptionsSerializer(serializers.ModelSerializer):
     class Meta:
         model = DepositOptions
         fields = '__all__'
         read_only_fields = ('product',)
 
-# 2. 예금 상품 시리얼라이저 (수정됨!)
+# 2. 예금/적금 상품 시리얼라이저
 class DepositProductSerializer(serializers.ModelSerializer):
-    # [핵심 수정] related_name='options'를 통해 연결된 금리 정보를 가져옵니다.
     options = DepositOptionsSerializer(many=True, read_only=True)
 
     class Meta:
         model = DepositProduct
-        fields = '__all__' # 이제 결과 JSON에 'options': [...] 가 포함됩니다.
+        fields = '__all__'
 
-User = get_user_model()
-
-
+# 3. 유저-상품 중개 모델 시리얼라이저 (핵심 수정)
 class UserJoinedProductSerializer(serializers.ModelSerializer):
-    # 연결된 상품의 기본 정보도 함께 포함
-    product_name = serializers.CharField(source='product.fin_prdt_nm', read_only=True)
-    bank_name = serializers.CharField(source='product.kor_co_nm', read_only=True)
-    save_trm = serializers.IntegerField(source='product.options.first.save_trm', read_only=True)
+    # [수정] 상품 상세 정보를 중첩해서 가져와 프론트엔드에서 product.fin_prdt_nm 및 options 접근 가능
     product = DepositProductSerializer(read_only=True)
     
     class Meta:
         model = UserJoinedProduct
-        fields = ('id', 'product', 'product_name', 'bank_name', 'amount', 'monthly_payment', 'joined_at', 'save_trm')
+        # [수정] joined_at, intr_rate, intr_rate_type 필드 추가하여 수정 가능하도록 설정
+        fields = (
+            'id', 'product', 'amount', 'monthly_payment', 
+            'joined_at', 'save_trm', 'intr_rate', 'intr_rate_type'
+        )
 
-
+# 4. 유저 시리얼라이저 (마이페이지용)
 class UserSerializer(serializers.ModelSerializer):
-    # ★ 핵심: 역참조 데이터를 가져올 때, 기존에 만든 ProductSerializer를 재사용합니다.
-    # many=True: 가입한 상품이 여러 개일 수 있음
-    # read_only=True: 프로필 조회 시 상품 정보를 수정하진 않음
+    # [수정] 사용자가 가입한 상품의 상세 내역(금액, 기간, 적용금리 등)을 포함
     joined_details = UserJoinedProductSerializer(many=True, read_only=True)
 
     class Meta:
         model = User
         fields = ('id', 'username', 'email', 'joined_details', 'age', 'money', 'salary')
-        
-# [추가] 전세자금대출 옵션 시리얼라이저
+
+# 5. 전세자금대출 관련 시리얼라이저
 class JeonseLoanOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = JeonseLoanOption
         fields = '__all__'
         read_only_fields = ('product',)
 
-# [추가] 전세자금대출 상품 시리얼라이저 (옵션 포함)
 class JeonseLoanProductSerializer(serializers.ModelSerializer):
-    # 역참조 이름(related_name='options')을 사용해 옵션 정보를 같이 보여줍니다.
     options = JeonseLoanOptionSerializer(many=True, read_only=True)
 
     class Meta:
         model = JeonseLoanProduct
         fields = '__all__'
 
-# [추가] ArticleSerializer
+# 6. 커뮤니티 게시글 시리얼라이저
 class ArticleSerializer(serializers.ModelSerializer):
-    # 게시글 작성자를 위한 중첩 시리얼라이저 (읽기 전용)
-    user = UserSerializer(read_only=True) 
+    user = serializers.ReadOnlyField(source='user.username')
 
     class Meta:
         model = Article
         fields = ('id', 'user', 'title', 'content', 'created_at', 'updated_at')
-        read_only_fields = ('user', 'created_at', 'updated_at') # user는 자동으로 할당됨
+        read_only_fields = ('user', 'created_at', 'updated_at')
 
-# [추가] ArticleListSerializer (목록 조회 시 상세 유저 정보는 제외)
 class ArticleListSerializer(serializers.ModelSerializer):
-    user = serializers.CharField(source='user.username', read_only=True) # 사용자 이름만 표시
+    user = serializers.CharField(source='user.username', read_only=True)
 
     class Meta:
         model = Article
-        # [수정] 아래 fields 목록에 'content'를 꼭 추가해주세요!
         fields = ('id', 'user', 'title', 'content', 'created_at')
